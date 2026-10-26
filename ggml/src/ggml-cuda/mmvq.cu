@@ -442,6 +442,8 @@ static constexpr __host__ __device__ int calc_nwarps(ggml_type type, int ncols_d
                 case GGML_TYPE_Q6_K:
                 case GGML_TYPE_IQ4_NL:
                 case GGML_TYPE_IQ4_XS:
+                case GGML_TYPE_IQ1_S:
+                case GGML_TYPE_IQ1_M:
                     return 8;
                 default:
                     return 1;
@@ -648,6 +650,18 @@ static __global__ void mul_mat_vec_q(
         }
     }
 
+#if defined(GGML_USE_HIP)
+    // LDS grid caching for IQ1_S and IQ1_M on AMD RDNA/CDNA architectures
+    // Eliminates scalar constant memory cache contention and serialization across SIMDs
+    __shared__ uint32_t s_iq1s_grid[(type == GGML_TYPE_IQ1_S || type == GGML_TYPE_IQ1_M) ? 2048 : 1];
+    if constexpr (type == GGML_TYPE_IQ1_S || type == GGML_TYPE_IQ1_M) {
+        for (int i = tid; i < 2048; i += nwarps * warp_size) {
+            s_iq1s_grid[i] = iq1s_grid_gpu[i];
+        }
+        __syncthreads();
+    }
+#endif
+
     // partial sum for each thread
     float tmp[ncols_dst][rows_per_cuda_block] = {{0.0f}};
     float tmp_gate[ncols_dst][rows_per_cuda_block] = {{0.0f}};
@@ -665,6 +679,32 @@ static __global__ void mul_mat_vec_q(
         for (int j = 0; j < ncols_dst; ++j) {
 #pragma unroll
             for (int i = 0; i < rows_per_cuda_block; ++i) {
+#if defined(GGML_USE_HIP)
+                if constexpr (type == GGML_TYPE_IQ1_S) {
+                    tmp[j][i] += vec_dot_iq1_s_q8_1(
+                        vx, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs, s_iq1s_grid);
+                } else if constexpr (type == GGML_TYPE_IQ1_M) {
+                    tmp[j][i] += vec_dot_iq1_m_q8_1(
+                        vx, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs, s_iq1s_grid);
+                } else {
+                    tmp[j][i] += vec_dot_q_cuda(
+                        vx, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs);
+                }
+                if constexpr (has_fusion) {
+                    if (use_gate) {
+                        if constexpr (type == GGML_TYPE_IQ1_S) {
+                            tmp_gate[j][i] += vec_dot_iq1_s_q8_1(
+                                vgate, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs, s_iq1s_grid);
+                        } else if constexpr (type == GGML_TYPE_IQ1_M) {
+                            tmp_gate[j][i] += vec_dot_iq1_m_q8_1(
+                                vgate, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs, s_iq1s_grid);
+                        } else {
+                            tmp_gate[j][i] += vec_dot_q_cuda(
+                                vgate, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs);
+                        }
+                    }
+                }
+#else
                 tmp[j][i] += vec_dot_q_cuda(
                     vx, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs);
                 if constexpr (has_fusion) {
@@ -673,6 +713,7 @@ static __global__ void mul_mat_vec_q(
                             vgate, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs);
                     }
                 }
+#endif
             }
         }
     }

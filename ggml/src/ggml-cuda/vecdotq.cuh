@@ -1234,7 +1234,8 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
 #define VDR_IQ1_S_Q8_1_MMQ  1
 
 static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs,
+    const uint32_t * __restrict__ grid_table) {
     const block_iq1_s * bq1 = (const block_iq1_s *) vbq + kbx;
 
     const int       qs_packed = get_int_b2(bq1->qs, iqs);
@@ -1245,7 +1246,7 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const int grid = iq1s_grid_gpu[qs[l0/2] | (((qh >> 3*(l0/2)) & 0x07) << 8)];
+        const int grid = grid_table[qs[l0/2] | (((qh >> 3*(l0/2)) & 0x07) << 8)];
 
         const int grid0 = (grid >> 0) & 0x0F0F0F0F;
         const int grid1 = (grid >> 4) & 0x0F0F0F0F;
@@ -1263,11 +1264,17 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     return d1q * (ds.x*sumi + ds.y*delta);
 }
 
+static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    return vec_dot_iq1_s_q8_1(vbq, bq8_1, kbx, iqs, iq1s_grid_gpu);
+}
+
 #define VDR_IQ1_M_Q8_1_MMVQ 1
 #define VDR_IQ1_M_Q8_1_MMQ  1
 
 static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs,
+    const uint32_t * __restrict__ grid_table) {
 
     const block_iq1_m * bq1 = (const block_iq1_m *) vbq + kbx;
 
@@ -1280,7 +1287,7 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     for (int l0 = 0; l0 < 8; l0 += 2) {
         const int qhl = bq1->qh[2*iqs + l0/4] >> (4 * ((l0/2) % 2));
 
-        const int grid = iq1s_grid_gpu[qs[l0/2] | ((qhl & 0x07) << 8)];
+        const int grid = grid_table[qs[l0/2] | ((qhl & 0x07) << 8)];
 
         const int grid0 = (grid >> 0) & 0x0F0F0F0F;
         const int grid1 = (grid >> 4) & 0x0F0F0F0F;
@@ -1308,6 +1315,11 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     const int sc0 = 2*((tmp >> 0) & 0x07) + 1;
     const int sc1 = 2*((tmp >> 3) & 0x07) + 1;
     return d * ((sumi[0] + sumf[0]) * sc0 + (sumi[1] + sumf[1]) * sc1);
+}
+
+static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    return vec_dot_iq1_m_q8_1(vbq, bq8_1, kbx, iqs, iq1s_grid_gpu);
 }
 
 #define VDR_IQ4_NL_Q8_1_MMVQ 2
